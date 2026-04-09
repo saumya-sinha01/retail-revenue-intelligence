@@ -1,20 +1,60 @@
-# Virtual environment
-.venv/
-
-# Python cache
+# -----------------------------
+# Python
+# -----------------------------
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+*.sqlite3
 
+# Virtual environments
+.venv/
+venv/
+env/
+
+# -----------------------------
 # Environment variables
+# -----------------------------
 .env
+.env.*
 
+# -----------------------------
+# Logs
+# -----------------------------
+*.log
+
+# -----------------------------
 # OS files
+# -----------------------------
 .DS_Store
 Thumbs.db
 
-# IDE
+# -----------------------------
+# IDE / Editors
+# -----------------------------
 .vscode/
 .idea/
 
-# Logs
-*.log
+# -----------------------------
+# Data files (IMPORTANT)
+# -----------------------------
+data/
+*.csv
+*.parquet
+*.json
+
+# -----------------------------
+# Spark / Hadoop
+# -----------------------------
+metastore_db/
+spark-warehouse/
+
+# -----------------------------
+# Streamlit
+# -----------------------------
+.streamlit/
+
+# -----------------------------
+# Jupyter (if you ever use)
+# -----------------------------
+.ipynb_checkpoints/
