@@ -5,9 +5,8 @@ An end-to-end data engineering and analytics platform that simulates a retail bu
 In real-world retail systems, data from orders, inventory, and logistics often exists in silos, making it difficult to measure critical metrics such as revenue loss due to stockouts, inventory availability at the time of purchase, and the impact of fulfillment delays on business performance. This project addresses these gaps by building a unified pipeline that integrates multiple data sources, applies accurate point-in-time transformations, and generates reliable, decision-ready analytics.
 
 The platform enables stakeholders to track core KPIs such as total revenue, average order value, revenue at risk due to stockouts, and supply chain efficiency, thereby supporting data-driven decision making.
-
 This project demonstrates a modern data stack using PySpark, Airflow, LocalStack (S3), PostgreSQL, FastAPI, and Streamlit to build scalable data pipelines and business-ready analytics.
----
+
 
 ## 🚀 Project Overview
 
@@ -82,17 +81,33 @@ This project builds a **medallion architecture (Bronze → Silver → Gold)** pi
 
 ## 🔄 Data Pipeline Flow
 
-### 1️⃣ Bronze Layer (Raw Ingestion)
+#### 📥 Data Sources
 
-- Ingests raw data into S3 (LocalStack)
-- Sources:
-  - Orders
-  - Inventory
-  - Logistics API (FastAPI)
+- **Orders (Transactional Data – Synthetic Generator)**
+  - Simulates an e-commerce order system
+  - Contains customer purchases, pricing, quantity, region, and timestamps
+  - Generated using Python scripts
+  - Stored as JSON files in:
+    ```
+    s3://retail-bronze/orders/
+    ```
 
-**Example Output:**
-s3://retail-bronze/orders/2026-xx-xx.json
----
+- **Inventory (Relational Database – PostgreSQL)**
+  - Represents inventory snapshots at different points in time
+  - Captures stock levels per SKU and region
+  - Extracted using SQL queries from PostgreSQL (`inventory_snapshots` table)
+  - Stored as JSON files in:
+    ```
+    s3://retail-bronze/inventory/
+    ```
+
+- **Logistics (External API – FastAPI Mock Service)**
+  - Simulates shipment and delivery events
+  - Includes delivery status, delays, and fulfillment information
+  - Retrieved via API calls for each order (`/shipments/{order_id}`)
+  - Stored as JSON files in:
+    ```
+    s3://retail-bronze/logistics/
 
 ### 2️⃣ Silver Layer (Data Transformation)
 
