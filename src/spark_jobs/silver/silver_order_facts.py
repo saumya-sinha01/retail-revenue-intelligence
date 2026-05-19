@@ -1,5 +1,7 @@
+import boto3
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, current_timestamp, row_number
+from pyspark.sql.types import StructType, StructField, StringType
 from pyspark.sql.window import Window
 
 
@@ -7,6 +9,18 @@ BRONZE_BUCKET = "s3a://retail-bronze"
 SILVER_BUCKET = "s3a://retail-silver/order_facts"
 
 LOCALSTACK_ENDPOINT = "http://localstack:4566"
+
+
+def _s3_prefix_has_files(bucket: str, prefix: str) -> bool:
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=LOCALSTACK_ENDPOINT,
+        aws_access_key_id="test",
+        aws_secret_access_key="test",
+        region_name="us-east-1",
+    )
+    resp = s3.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=1)
+    return resp.get("KeyCount", 0) > 0
 
 
 def create_spark_session():
@@ -72,22 +86,23 @@ def main():
         .withColumnRenamed("region", "inventory_region")
     )
 
-    logistics = (
-        spark.read
-        .option("multiLine", "true")
-        .json(f"{BRONZE_BUCKET}/logistics/*.json")
-
-        # ------------------------------------------------------------------
-        # NEW COMMENT
-        #
-        # Normalize logistics schema so downstream layers always receive
-        # consistent column naming.
-        #
-        # Bronze uses "status" but Silver standardizes to "delivery_status"
-        # to make the meaning clearer for analytics layers.
-        # ------------------------------------------------------------------
-        .withColumnRenamed("status", "delivery_status")
-    )
+    if _s3_prefix_has_files("retail-bronze", "logistics/"):
+        logistics = (
+            spark.read
+            .option("multiLine", "true")
+            .json(f"{BRONZE_BUCKET}/logistics/*.json")
+            .withColumnRenamed("status", "delivery_status")
+        )
+    else:
+        print("WARNING: No logistics files found in bronze — using empty dataset")
+        logistics_schema = StructType([
+            StructField("order_id", StringType(), True),
+            StructField("delivery_status", StringType(), True),
+            StructField("carrier", StringType(), True),
+            StructField("ship_ts", StringType(), True),
+            StructField("delivered_ts", StringType(), True),
+        ])
+        logistics = spark.createDataFrame([], logistics_schema)
 
     # ------------------------------------------------------------------
     # POINT-IN-TIME INVENTORY JOIN
@@ -180,6 +195,8 @@ def main():
             # --------------------------------------------------------------
             # Order attributes
             # --------------------------------------------------------------
+            col("oi.order_ts"),
+            col("oi.channel"),
             col("oi.qty").alias("quantity"),
             col("oi.unit_price").alias("price"),
 
@@ -232,7 +249,8 @@ def main():
         order_facts
         .write
         .mode("overwrite")
-        .json(SILVER_BUCKET)
+        .partitionBy("region")
+        .parquet(SILVER_BUCKET)
     )
 
     spark.stop()

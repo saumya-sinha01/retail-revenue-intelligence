@@ -58,7 +58,6 @@ def main():
 
     print("Loading Silver order_facts dataset...")
 
-    # FIX: Silver is written as parquet, not json
     order_facts = spark.read.parquet(SILVER_BUCKET)
 
     print("Silver data loaded successfully")

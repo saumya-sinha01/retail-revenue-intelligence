@@ -1,23 +1,16 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, sum, avg, count, current_timestamp
-
+from pyspark.sql.functions import (
+    col, sum, avg, count, current_timestamp,
+    date_format, to_timestamp
+)
 
 SILVER_BUCKET = "s3a://retail-silver/order_facts"
-GOLD_BUCKET = "s3a://retail-gold/revenue_kpis"
-
+GOLD_BUCKET   = "s3a://retail-gold/revenue_kpis"
 LOCALSTACK_ENDPOINT = "http://localstack:4566"
 
 
 def create_spark_session():
-    """
-    Create Spark session with S3A + LocalStack configuration.
-
-    This mirrors the same runtime pattern used in Bronze/Silver jobs so
-    all Spark jobs behave consistently in the project.
-    """
-
     print("Creating Spark session...")
-
     spark = (
         SparkSession.builder
         .appName("GoldRevenueKPIs")
@@ -37,129 +30,108 @@ def create_spark_session():
         )
         .getOrCreate()
     )
-
-    print("Spark session created successfully")
-
+    print("Spark session created")
     return spark
 
 
 def main():
-
     print("Starting Gold Revenue KPIs job...")
-
     spark = create_spark_session()
 
-    # ------------------------------------------------------------------
-    # Load Silver fact table
-    # ------------------------------------------------------------------
-
-    print("Loading Silver order_facts dataset...")
-
-    order_facts = spark.read.json(SILVER_BUCKET)
-
-    print("Silver data loaded successfully")
-
-    # ------------------------------------------------------------------
-    # Data quality guardrail
-    # ------------------------------------------------------------------
-
-    print("Applying data quality filters...")
-
-    order_facts_clean = (
-        order_facts
+    order_facts = (
+        spark.read.parquet(SILVER_BUCKET)
         .filter(col("order_id").isNotNull())
         .filter(col("sku").isNotNull())
         .filter(col("order_value").isNotNull())
+        .withColumn("order_month", date_format(to_timestamp(col("order_ts")), "yyyy-MM"))
     )
 
-    print("Data quality filtering completed")
+    ts = current_timestamp()
 
-    # ------------------------------------------------------------------
-    # GOLD DATASET 1: Revenue Summary
-    # ------------------------------------------------------------------
-
-    print("Computing revenue summary metrics...")
-
+    # 1 — Overall summary
     revenue_summary = (
-        order_facts_clean
-        .agg(
+        order_facts.agg(
             sum("order_value").alias("total_revenue"),
             avg("order_value").alias("avg_order_value"),
-            count("order_id").alias("total_orders")   # ✅ FIXED
-        )
-        .withColumn("metric_generated_ts", current_timestamp())
+            count("order_id").alias("total_orders"),
+        ).withColumn("metric_generated_ts", ts)
     )
 
-    # ------------------------------------------------------------------
-    # GOLD DATASET 2: Revenue by Region
-    # ------------------------------------------------------------------
-
-    print("Computing revenue by region metrics...")
-
+    # 2 — By region
     revenue_by_region = (
-        order_facts_clean
-        .groupBy("region")
+        order_facts.groupBy("region")
         .agg(
             sum("order_value").alias("total_revenue"),
-            count("order_id").alias("total_orders"),   # ✅ FIXED
-            avg("order_value").alias("avg_order_value")
-        )
-        .withColumn("metric_generated_ts", current_timestamp())
+            count("order_id").alias("total_orders"),
+            avg("order_value").alias("avg_order_value"),
+        ).withColumn("metric_generated_ts", ts)
     )
 
-    # ------------------------------------------------------------------
-    # GOLD DATASET 3: Revenue by SKU
-    # ------------------------------------------------------------------
+    # 3 — By channel
+    revenue_by_channel = (
+        order_facts.groupBy("channel")
+        .agg(
+            sum("order_value").alias("total_revenue"),
+            count("order_id").alias("total_orders"),
+            avg("order_value").alias("avg_order_value"),
+        ).withColumn("metric_generated_ts", ts)
+    )
 
-    print("Computing revenue by SKU metrics...")
+    # 4 — Monthly trend
+    revenue_by_month = (
+        order_facts.groupBy("order_month")
+        .agg(
+            sum("order_value").alias("total_revenue"),
+            count("order_id").alias("total_orders"),
+            avg("order_value").alias("avg_order_value"),
+        ).orderBy("order_month")
+        .withColumn("metric_generated_ts", ts)
+    )
 
+    # 5 — Monthly × Region (powers the filtered region chart in the dashboard)
+    revenue_by_month_region = (
+        order_facts.groupBy("order_month", "region")
+        .agg(
+            sum("order_value").alias("total_revenue"),
+            count("order_id").alias("total_orders"),
+            avg("order_value").alias("avg_order_value"),
+        ).orderBy("order_month", "region")
+        .withColumn("metric_generated_ts", ts)
+    )
+
+    # 6 — Monthly × Channel
+    revenue_by_month_channel = (
+        order_facts.groupBy("order_month", "channel")
+        .agg(
+            sum("order_value").alias("total_revenue"),
+            count("order_id").alias("total_orders"),
+            avg("order_value").alias("avg_order_value"),
+        ).orderBy("order_month", "channel")
+        .withColumn("metric_generated_ts", ts)
+    )
+
+    # 7 — Top SKUs
     revenue_by_sku = (
-        order_facts_clean
-        .groupBy("sku")
+        order_facts.groupBy("sku")
         .agg(
             sum("order_value").alias("total_revenue"),
-            count("order_id").alias("total_orders"),   # ✅ FIXED
-            avg("order_value").alias("avg_order_value")
-        )
-        .withColumn("metric_generated_ts", current_timestamp())
+            count("order_id").alias("total_orders"),
+            avg("order_value").alias("avg_order_value"),
+        ).orderBy(col("total_revenue").desc())
+        .withColumn("metric_generated_ts", ts)
     )
 
-    # ------------------------------------------------------------------
-    # Write Gold outputs
-    # ------------------------------------------------------------------
+    print("Writing Gold revenue datasets...")
+    revenue_summary.write.mode("overwrite").parquet(f"{GOLD_BUCKET}/summary")
+    revenue_by_region.write.mode("overwrite").parquet(f"{GOLD_BUCKET}/by_region")
+    revenue_by_channel.write.mode("overwrite").parquet(f"{GOLD_BUCKET}/by_channel")
+    revenue_by_month.write.mode("overwrite").parquet(f"{GOLD_BUCKET}/by_month")
+    revenue_by_month_region.write.mode("overwrite").parquet(f"{GOLD_BUCKET}/by_month_region")
+    revenue_by_month_channel.write.mode("overwrite").parquet(f"{GOLD_BUCKET}/by_month_channel")
+    revenue_by_sku.write.mode("overwrite").parquet(f"{GOLD_BUCKET}/by_sku")
 
-    print("Writing revenue summary dataset...")
-
-    (
-        revenue_summary
-        .write
-        .mode("overwrite")
-        .parquet(f"{GOLD_BUCKET}/summary")
-    )
-
-    print("Writing revenue by region dataset...")
-
-    (
-        revenue_by_region
-        .write
-        .mode("overwrite")
-        .parquet(f"{GOLD_BUCKET}/by_region")
-    )
-
-    print("Writing revenue by SKU dataset...")
-
-    (
-        revenue_by_sku
-        .write
-        .mode("overwrite")
-        .parquet(f"{GOLD_BUCKET}/by_sku")
-    )
-
-    print("Gold Revenue KPI job completed successfully")
-
+    print("Gold Revenue KPI job completed.")
     spark.stop()
-
-    print("Spark session stopped")
 
 
 if __name__ == "__main__":

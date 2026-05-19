@@ -5,13 +5,11 @@ import boto3
 import pandas as pd
 import pyarrow.parquet as pq
 
-# LocalStack endpoint (host machine)
-S3_ENDPOINT = "http://localhost:4566"
-AWS_REGION = "us-east-1"
-AWS_ACCESS_KEY_ID = "test"
+S3_ENDPOINT           = "http://localhost:4566"
+AWS_REGION            = "us-east-1"
+AWS_ACCESS_KEY_ID     = "test"
 AWS_SECRET_ACCESS_KEY = "test"
-
-GOLD_BUCKET = "retail-gold"
+GOLD_BUCKET           = "retail-gold"
 
 
 def _get_s3_client():
@@ -25,73 +23,54 @@ def _get_s3_client():
 
 
 def _list_parquet_keys(bucket: str, prefix: str) -> List[str]:
-    """
-    Return all parquet object keys under a dataset prefix like:
-    revenue_kpis/summary/
-    """
-    s3 = _get_s3_client()
-
-    paginator = s3.get_paginator("list_objects_v2")
+    s3  = _get_s3_client()
+    pag = s3.get_paginator("list_objects_v2")
     keys: List[str] = []
-
-    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+    for page in pag.paginate(Bucket=bucket, Prefix=prefix):
         for obj in page.get("Contents", []):
-            key = obj["Key"]
-            if key.endswith(".parquet"):
-                keys.append(key)
-
-    if not keys:
-        raise FileNotFoundError(
-            f"No parquet files found in s3://{bucket}/{prefix}"
-        )
-
+            if obj["Key"].endswith(".parquet"):
+                keys.append(obj["Key"])
     return sorted(keys)
 
 
 def _read_parquet_dataset(bucket: str, prefix: str) -> pd.DataFrame:
-    """
-    Read a Spark-written parquet dataset from LocalStack S3 by downloading
-    all part-*.parquet files under the prefix and concatenating them.
-    """
-    s3 = _get_s3_client()
-    parquet_keys = _list_parquet_keys(bucket, prefix)
-
+    s3   = _get_s3_client()
+    keys = _list_parquet_keys(bucket, prefix)
+    if not keys:
+        return pd.DataFrame()
     frames = []
-    for key in parquet_keys:
-        response = s3.get_object(Bucket=bucket, Key=key)
-        body = response["Body"].read()
-
-        table = pq.read_table(io.BytesIO(body))
-        frames.append(table.to_pandas())
-
-    if not frames:
-        raise FileNotFoundError(
-            f"Dataset exists but no readable parquet parts found in s3://{bucket}/{prefix}"
-        )
-
-    return pd.concat(frames, ignore_index=True)
+    for key in keys:
+        try:
+            body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+            frames.append(pq.read_table(io.BytesIO(body)).to_pandas())
+        except Exception:
+            continue
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
-# -----------------------------
-# Revenue Data
-# -----------------------------
+# ── Revenue ───────────────────────────────────────────────────────────────
 def load_revenue_data():
-    summary = _read_parquet_dataset(GOLD_BUCKET, "revenue_kpis/summary/")
-    by_region = _read_parquet_dataset(GOLD_BUCKET, "revenue_kpis/by_region/")
-    return summary, by_region
+    summary           = _read_parquet_dataset(GOLD_BUCKET, "revenue_kpis/summary/")
+    by_region         = _read_parquet_dataset(GOLD_BUCKET, "revenue_kpis/by_region/")
+    by_channel        = _read_parquet_dataset(GOLD_BUCKET, "revenue_kpis/by_channel/")
+    by_month          = _read_parquet_dataset(GOLD_BUCKET, "revenue_kpis/by_month/")
+    by_month_region   = _read_parquet_dataset(GOLD_BUCKET, "revenue_kpis/by_month_region/")
+    by_month_channel  = _read_parquet_dataset(GOLD_BUCKET, "revenue_kpis/by_month_channel/")
+    by_sku            = _read_parquet_dataset(GOLD_BUCKET, "revenue_kpis/by_sku/")
+    return summary, by_region, by_channel, by_month, by_month_region, by_month_channel, by_sku
 
 
-# -----------------------------
-# Revenue at Risk
-# -----------------------------
+# ── Risk ──────────────────────────────────────────────────────────────────
 def load_risk_data():
-    summary = _read_parquet_dataset(GOLD_BUCKET, "revenue_at_risk/summary/")
-    return summary
+    summary   = _read_parquet_dataset(GOLD_BUCKET, "revenue_at_risk/summary/")
+    by_region = _read_parquet_dataset(GOLD_BUCKET, "revenue_at_risk/by_region/")
+    by_sku    = _read_parquet_dataset(GOLD_BUCKET, "revenue_at_risk/by_sku/")
+    return summary, by_region, by_sku
 
 
-# -----------------------------
-# Supply Chain Metrics
-# -----------------------------
+# ── Supply Chain ──────────────────────────────────────────────────────────
 def load_supply_chain_data():
-    summary = _read_parquet_dataset(GOLD_BUCKET, "supply_chain_metrics/summary/")
-    return summary
+    summary       = _read_parquet_dataset(GOLD_BUCKET, "supply_chain_metrics/summary/")
+    by_warehouse  = _read_parquet_dataset(GOLD_BUCKET, "supply_chain_metrics/by_warehouse/")
+    top_stockouts = _read_parquet_dataset(GOLD_BUCKET, "supply_chain_metrics/top_stockout_skus/")
+    return summary, by_warehouse, top_stockouts
