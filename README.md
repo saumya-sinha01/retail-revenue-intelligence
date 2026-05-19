@@ -1,206 +1,308 @@
-# 📊 Retail Revenue & Growth Analytics (POC)
+# 📊 Retail Revenue Intelligence
 
 An end-to-end data engineering and analytics platform that simulates a retail business environment to solve key business challenges around revenue visibility, inventory management, and supply chain performance.
 
-In real-world retail systems, data from orders, inventory, and logistics often exists in silos, making it difficult to measure critical metrics such as revenue loss due to stockouts, inventory availability at the time of purchase, and the impact of fulfillment delays on business performance. This project addresses these gaps by building a unified pipeline that integrates multiple data sources, applies accurate point-in-time transformations, and generates reliable, decision-ready analytics.
+In real-world retail systems, data from orders, inventory, and logistics often exists in silos — making it difficult to measure critical metrics such as revenue loss due to stockouts, inventory availability at the time of purchase, and the impact of fulfillment delays on business performance. This project addresses these gaps by building a unified pipeline that integrates multiple data sources, applies accurate point-in-time transformations, and generates reliable, decision-ready analytics at scale.
 
-The platform enables stakeholders to track core KPIs such as total revenue, average order value, revenue at risk due to stockouts, and supply chain efficiency, thereby supporting data-driven decision making.
-This project demonstrates a modern data stack using PySpark, Airflow, LocalStack (S3), PostgreSQL, FastAPI, and Streamlit to build scalable data pipelines and business-ready analytics.
-
+---
 
 ## 🚀 Project Overview
 
-This project builds a **medallion architecture (Bronze → Silver → Gold)** pipeline to:
+This project builds a **medallion architecture (Bronze → Silver → Gold)** pipeline that:
 
-- Ingest raw data from multiple sources  
-- Clean and transform data into analytics-ready datasets  
-- Generate business KPIs  
-- Visualize insights through dashboards  
+- Ingests raw data from multiple sources (synthetic orders, PostgreSQL inventory, mock logistics API)
+- Cleans, joins, and transforms data into a point-in-time accurate Silver fact table
+- Generates business KPIs across revenue, risk, and supply chain dimensions
+- Visualizes insights through an interactive Streamlit dashboard with live filters and trend deltas
+
+**Scale:** 50,000 orders · 200 SKUs · 5,000 customers · 10 warehouses · 6 months of history
 
 ---
 
 ## 🏗️ Architecture
-         +----------------------+
-         |   Data Sources       |
-         |----------------------|
-         | Orders              |
-         | Inventory           |
-         | Logistics API       |
-         +----------+----------+
-                    |
-                    ▼
-         +----------------------+
-         |   Bronze Layer       |
-         |----------------------|
-         | Raw JSON in S3       |
-         | (LocalStack)         |
-         +----------+----------+
-                    |
-                    ▼
-         +----------------------+
-         |   Silver Layer       |
-         |----------------------|
-         | Cleaned & Conformed  |
-         | Order Facts Table    |
-         +----------+----------+
-                    |
-                    ▼
-         +----------------------+
-         |   Gold Layer         |
-         |----------------------|
-         | Revenue KPIs         |
-         | Revenue at Risk      |
-         | Supply Chain Metrics |
-         +----------+----------+
-                    |
-                    ▼
-         +----------------------+
-         |   Visualization      |
-         |----------------------|
-         | Streamlit Dashboard  |
-         +----------------------+
 
+```
+┌─────────────────────────────────────────────┐
+│               Data Sources                  │
+│  Orders (Python Generator)                  │
+│  Inventory (PostgreSQL snapshots)           │
+│  Logistics (FastAPI Mock Service)           │
+└────────────────────┬────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────┐
+│            Bronze Layer (S3)                │
+│  Raw JSON files partitioned by source       │
+│  s3://retail-bronze/orders/                 │
+│  s3://retail-bronze/inventory/              │
+│  s3://retail-bronze/logistics/              │
+└────────────────────┬────────────────────────┘
+                     │  PySpark
+                     ▼
+┌─────────────────────────────────────────────┐
+│            Silver Layer (S3)                │
+│  Cleaned & point-in-time joined fact table  │
+│  Partitioned by region                      │
+│  s3://retail-silver/order_facts/            │
+└────────────────────┬────────────────────────┘
+                     │  PySpark
+                     ▼
+┌─────────────────────────────────────────────┐
+│             Gold Layer (S3)                 │
+│  Revenue KPIs (summary, region, channel,    │
+│    month, month×region, month×channel, sku) │
+│  Revenue at Risk (summary, region, sku)     │
+│  Supply Chain (summary, warehouse, top SKUs)│
+└────────────────────┬────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────┐
+│         Streamlit Dashboard                 │
+│  Sidebar filters: Month · Region            │
+│  KPIs with MoM delta · Charts · Tables      │
+└─────────────────────────────────────────────┘
+```
+
+**Orchestration:** Apache Airflow DAG manages the full pipeline with correct dependency ordering.
+
+```
+bronze_orders ──► bronze_logistics ──┐
+bronze_inventory ────────────────────┴──► silver_order_facts ──► gold_revenue_kpis
+                                                              ├──► gold_revenue_at_risk
+                                                              └──► gold_supply_chain_metrics
+```
 
 ---
 
 ## 🧱 Tech Stack
 
-| Component        | Technology |
-|-----------------|-----------|
-| Data Processing | PySpark |
-| Orchestration   | Apache Airflow |
-| Storage         | LocalStack (S3 simulation) |
-| Database        | PostgreSQL |
-| API Simulation  | FastAPI |
-| Visualization   | Streamlit |
-| Containerization| Docker |
+| Component         | Technology                        |
+|-------------------|-----------------------------------|
+| Data Processing   | PySpark 3.5.1                     |
+| Orchestration     | Apache Airflow 2.9.3              |
+| Object Storage    | LocalStack (S3 simulation)        |
+| Database          | PostgreSQL 15                     |
+| API Simulation    | FastAPI + Uvicorn                 |
+| Visualization     | Streamlit                         |
+| Containerization  | Docker + Docker Compose           |
+| Language          | Python 3.12                       |
 
 ---
 
----
+## 📁 Project Structure
 
-## 🔄 Data Pipeline Flow
-
-#### 📥 Data Sources
-
-- **Orders (Transactional Data – Synthetic Generator)**
-  - Simulates an e-commerce order system
-  - Contains customer purchases, pricing, quantity, region, and timestamps
-  - Generated using Python scripts
-  - Stored as JSON files in:
-    ```
-    s3://retail-bronze/orders/
-    ```
-
-- **Inventory (Relational Database – PostgreSQL)**
-  - Represents inventory snapshots at different points in time
-  - Captures stock levels per SKU and region
-  - Extracted using SQL queries from PostgreSQL (`inventory_snapshots` table)
-  - Stored as JSON files in:
-    ```
-    s3://retail-bronze/inventory/
-    ```
-
-- **Logistics (External API – FastAPI Mock Service)**
-  - Simulates shipment and delivery events
-  - Includes delivery status, delays, and fulfillment information
-  - Retrieved via API calls for each order (`/shipments/{order_id}`)
-  - Stored as JSON files in:
-    ```
-    s3://retail-bronze/logistics/
-
-### 2️⃣ Silver Layer (Data Transformation)
-
-- Cleans and standardizes data  
-- Applies **point-in-time joins** to match inventory at order time  
-- Maintains correct **fact table grain (order_id + sku)**  
-
-**Key Fields:**
-- order_id  
-- sku  
-- order_value  
-- inventory_at_order_time  
-- stockout_flag  
-- ingestion_timestamp  
+```
+retail-revenue-intelligence/
+├── dags/
+│   └── retail_revenue_intelligence_dag.py   # Airflow DAG (full pipeline)
+├── infra/
+│   ├── airflow/Dockerfile                   # Airflow + Java + PySpark image
+│   ├── api/
+│   │   ├── Dockerfile
+│   │   ├── mock_logistics_api.py            # FastAPI mock with bulk endpoint
+│   │   └── requirements.txt
+│   ├── localstack/init_aws.sh               # Creates S3 buckets on startup
+│   └── postgres/init.sql                    # Inventory seed data (2,000+ rows)
+├── src/
+│   ├── dashboard/
+│   │   ├── app.py                           # Streamlit entry point + sidebar filters
+│   │   ├── data_loader.py                   # S3 parquet reader
+│   │   └── components/
+│   │       ├── revenue.py                   # Revenue KPI charts
+│   │       ├── risk.py                      # Revenue at risk charts
+│   │       └── supply_chain.py              # Supply chain metrics
+│   └── spark_jobs/
+│       ├── bronze/
+│       │   ├── bronze_orders_ingest.py      # Generates & uploads 50k orders
+│       │   ├── bronze_inventory_ingest.py   # Pulls inventory from PostgreSQL
+│       │   └── bronze_logistics_ingest.py   # Bulk fetches logistics from API
+│       ├── silver/
+│       │   └── silver_order_facts.py        # Point-in-time join, partitioned parquet
+│       └── gold/
+│           ├── gold_revenue_kpis.py         # Revenue aggregations (7 datasets)
+│           ├── gold_revenue_at_risk.py      # Stockout risk metrics
+│           └── gold_supply_chain_metrics.py # Warehouse & fulfillment metrics
+├── docker-compose.yml
+├── requirements.txt
+└── .env.example
+```
 
 ---
 
-### 3️⃣ Gold Layer (Analytics & KPIs)
+## 🔄 Data Pipeline Details
 
-#### 📈 Revenue KPIs
-- Total Revenue  
-- Total Orders  
-- Average Order Value  
+### Bronze Layer — Raw Ingestion
 
-#### ⚠️ Revenue at Risk
-- Revenue lost due to stockouts  
+| Source | Details |
+|--------|---------|
+| **Orders** | 50,000 synthetic orders over 6 months. Weighted by region (West 35%, East 25%), channel (online 45%, store 25%), and SKU velocity (top 40 SKUs = 70% of volume). Uploaded in batches of 1,000 to `s3://retail-bronze/orders/` |
+| **Inventory** | 2,000+ rows seeded in PostgreSQL (100 SKUs × 10 warehouses × 4 snapshot dates). High-velocity SKUs (001–040) intentionally seeded with low stock to produce realistic stockouts. Extracted and stored to `s3://retail-bronze/inventory/` |
+| **Logistics** | Mock FastAPI service with a `/shipments/bulk` endpoint. Fetches shipment status in batches of 500 orders. 5 carriers, 5 delivery statuses with realistic weights (55% DELIVERED). Stored to `s3://retail-bronze/logistics/` |
 
-#### 🚚 Supply Chain Metrics
-- Delivery delays  
-- Fulfillment performance  
+### Silver Layer — Transformation
+
+- Reads all three Bronze sources using PySpark
+- Applies a **point-in-time inventory join**: only inventory snapshots taken before the order timestamp are considered, selecting the latest valid snapshot via a window function
+- Deduplicates on `(order_id, sku)`
+- Derives `order_value`, `stockout_flag`, `inventory_at_order_time`
+- Writes partitioned parquet to `s3://retail-silver/order_facts/` partitioned by `region`
+
+**Silver Fact Table Schema:**
+
+| Column | Description |
+|--------|-------------|
+| order_id | Unique order identifier |
+| sku | Product SKU |
+| customer_id | Customer identifier |
+| order_ts | Order timestamp |
+| channel | Sales channel (online/store/mobile/marketplace) |
+| region | Geographic region |
+| quantity | Units ordered |
+| price | Unit price |
+| order_value | qty × unit_price |
+| inventory_at_order_time | Stock on hand at order time |
+| stockout_flag | True if inventory < quantity ordered |
+| warehouse_id | Fulfilling warehouse |
+| delivery_status | Shipment delivery status |
+| carrier | Logistics carrier |
+| ship_ts | Shipment timestamp |
+| delivered_ts | Delivery timestamp |
+| ingestion_ts | Pipeline ingestion timestamp |
+
+### Gold Layer — KPIs
+
+**Revenue KPIs** (`s3://retail-gold/revenue_kpis/`)
+- `summary/` — overall total revenue, orders, avg order value
+- `by_region/` — revenue breakdown by region
+- `by_channel/` — revenue breakdown by channel
+- `by_month/` — monthly revenue trend
+- `by_month_region/` — monthly × region (powers filtered dashboard charts)
+- `by_month_channel/` — monthly × channel
+- `by_sku/` — top SKUs ranked by revenue
+
+**Revenue at Risk** (`s3://retail-gold/revenue_at_risk/`)
+- `summary/` — total revenue at risk, stockout order count
+- `by_region/` — risk exposure by region
+- `by_sku/` — top SKUs by revenue at risk
+
+**Supply Chain Metrics** (`s3://retail-gold/supply_chain_metrics/`)
+- `summary/` — overall stockout rate, delivery success rate
+- `by_warehouse/` — per-warehouse stockout and delivery rates
+- `top_stockout_skus/` — top 50 SKUs by stockout frequency
 
 ---
 
-## 📊 Key Business Insights
+## 📊 Dashboard
 
-This system helps answer:
+The Streamlit dashboard connects to LocalStack S3 at `http://localhost:4566` and loads all Gold parquet datasets.
 
-- How much revenue is lost due to stockouts?  
-- Which SKUs or regions are underperforming?  
-- How efficient is the supply chain?  
-- What are the key drivers of revenue trends?  
+### Sidebar Filters
+- **Month(s)** — multiselect across available months; all KPIs recalculate instantly
+- **Region(s)** — multiselect; revenue charts filter to selected regions
+
+### Revenue Section
+- Total Revenue with **MoM delta** (▲/▼ % vs previous month)
+- Total Orders and Average Order Value
+- Monthly Revenue Trend (line chart)
+- Revenue by Region and by Channel (bar charts, sorted descending)
+- Top 20 SKUs by Revenue (table)
+
+### Revenue at Risk Section
+- Total Revenue at Risk and Stockout Order count
+- Revenue at Risk by Region (bar chart)
+- Top SKUs at Risk (table with revenue exposure)
+
+### Supply Chain Section
+- Total Order Lines, Stockout Rate %, Delivery Success Rate %
+- Stockout Rate by Warehouse (bar chart)
+- Top Stockout SKUs (table)
+- Full Warehouse Detail table
 
 ---
 
-## ⚙️ Setup Instructions
+## ⚙️ Setup & Running
 
-### 1 Start All Services
-docker compose up --build
-Services:
+### Prerequisites
+- Docker Desktop (running)
+- Python 3.x with pip
+- Git
 
-Airflow → http://localhost:8080
-LocalStack → http://localhost:4566
-FastAPI → http://localhost:8000
-PostgreSQL
+### Step 1 — Clone and configure
 
-### 2 Airflow Login
-Username: admin  
-Password: admin  
+```bash
+git clone https://github.com/saumya-sinha01/retail-revenue-intelligence.git
+cd retail-revenue-intelligence
+copy .env.example .env
+```
 
-Trigger DAGs:
-Bronze ingestion
-Silver transformation
-Gold metrics
+### Step 2 — Start all services
 
-### 3 Run Spark Jobs (Optional Manual Run)
-docker exec -it <container_name> bash
+```bash
+docker-compose down -v   # wipe volumes if re-running fresh
+docker-compose up --build
+```
 
-spark-submit src/bronze/bronze_orders_ingest.py
-spark-submit src/silver/silver_order_facts.py
-spark-submit src/gold/gold_revenue_kpis.py
+This starts:
 
-### 4 Run Streamlit Dashboard
-cd streamlit
+| Service | URL |
+|---------|-----|
+| Airflow Webserver | http://localhost:8080 |
+| LocalStack (S3) | http://localhost:4566 |
+| Mock Logistics API | http://localhost:8000 |
+| PostgreSQL | localhost:5432 |
+
+Wait ~2 minutes for `airflow-init` to complete.
+
+### Step 3 — Trigger the pipeline
+
+1. Open **http://localhost:8080**
+2. Login: `admin` / `admin`
+3. Find `retail_revenue_intelligence_dag`
+4. Toggle it **ON** → click **▶ Trigger**
+
+The DAG runs all 7 tasks in the correct order. Wait for all tasks to turn green (~3–5 minutes).
+
+### Step 4 — Run the dashboard
+
+```bash
+pip install streamlit boto3 pandas pyarrow
+cd src/dashboard
 streamlit run app.py
+```
 
-## What Was Achieved
-Built a complete end-to-end data pipeline
-Implemented medallion architecture (Bronze → Silver → Gold)
-Simulated real-world retail + logistics system
-Generated business KPIs and insights
-Integrated API + batch data sources
-Created analytics-ready datasets for decision making
+Open **http://localhost:8501**
 
-⚠️ Challenges Faced
-Spark + S3 Integration
-Issue: S3AFileSystem not found
-Fix: Added required Hadoop & AWS dependencies
-JAVA_HOME Errors
-Spark failed due to missing Java setup
-Fixed by configuring environment variables
-Docker Dependency Issues
-FastAPI container missing uvicorn
-Fixed by correcting requirements.txt
-Point-in-Time Join Complexity
-Needed correct inventory snapshot per order
-Solved using window functions
+---
+
+## 🔍 Key Business Insights Demonstrated
+
+| Question | Answer from Dashboard |
+|----------|----------------------|
+| How much revenue is at risk from stockouts? | $6M+ exposed across 3,300+ stockout orders |
+| Which region drives the most revenue? | West (35% of orders, highest avg order value) |
+| Which channel leads? | Online at 45% of volume |
+| Which warehouses have stockout problems? | W01 (21.7%) and W02 (29%) — all others at 0% |
+| Which SKUs need urgent restocking? | SKU026, SKU010, SKU022 — each $250k–$370k at risk |
+| Is revenue growing month over month? | MoM delta shown directly on the Total Revenue metric |
+
+---
+
+## ⚠️ Known Limitations
+
+- Data is synthetic — weighted to be realistic but not based on real retail patterns
+- LocalStack simulates AWS S3 locally; no real cloud deployment
+- Delivery success rate (~55%) is driven by mock API weights, not real carrier data
+- Pipeline runs full overwrite on each trigger (no incremental processing yet)
+
+---
+
+## 🛠️ Challenges Solved
+
+| Challenge | Solution |
+|-----------|----------|
+| Spark S3 connectivity | Configured `S3AFileSystem` with hadoop-aws + aws-java-sdk-bundle JARs |
+| DAG race condition | `bronze_logistics` now depends on `bronze_orders` completing first |
+| Point-in-time inventory join | Window function selects latest snapshot before each order timestamp |
+| Uniform data distributions | Weighted random generation: regions, channels, SKU velocity, price by channel |
+| Spark JAR download on every run | Pre-cached JARs in Airflow Dockerfile at build time |
+| Dashboard crash on missing data | Graceful empty DataFrame handling with user-friendly warnings |
